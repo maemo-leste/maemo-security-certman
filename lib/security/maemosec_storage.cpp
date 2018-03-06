@@ -40,6 +40,9 @@ using namespace maemosec;
 #include <errno.h>
 #include <sys/mman.h>
 #include <sys/fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
@@ -172,9 +175,14 @@ storage::init_storage(const char* name, visibility_t visibility, protection_t pr
 	unsigned char* data = (unsigned char*)MAP_FAILED;
 	int fd = -1, rc;
 	ssize_t len, rlen;
-	EVP_MD_CTX vfctx;
+	EVP_MD_CTX *vfctx = EVP_MD_CTX_new();
 	EVP_PKEY* pubkey = NULL;
 	const char* type_prefix;
+
+	if (vfctx == NULL) {
+		MAEMOSEC_ERROR("EVP_MD_CTX Initialization error");
+		return;
+	}
 
 	m_name = name;
 	m_symkey = NULL;
@@ -183,16 +191,16 @@ storage::init_storage(const char* name, visibility_t visibility, protection_t pr
 
 	if (bb5_get_cert(0) == NULL) {
 		MAEMOSEC_ERROR("Initialization error");
-		return;
+		goto free_vfctx;
 	}
 	pubkey = X509_get_pubkey(bb5_get_cert(0));
 	if (NULL == pubkey) {
 		MAEMOSEC_ERROR("Cannot get public key");
-		return;
+		goto free_vfctx;
 	}
 	if (0 != get_storage_directory(visibility, protection, m_filename)) {
 		MAEMOSEC_ERROR("Cannot bind storage '%s' to file", m_filename.c_str());
-		return;
+		goto free_vfctx;
 	}
 	m_filename.append(PATH_SEP);
 	m_filename.append(name);
@@ -208,8 +216,11 @@ storage::init_storage(const char* name, visibility_t visibility, protection_t pr
 			 * the BB5 public key
 			 */
 			RSA *rsakey = NULL;
-
+#if OPENSSL_VERSION_NUMBER >= 0x10100005L
+			if (EVP_PKEY_RSA == EVP_PKEY_base_id(pubkey)) 
+			#else
 			if (EVP_PKEY_RSA == EVP_PKEY_type(pubkey->type)) 
+#endif
 				rsakey = EVP_PKEY_get1_RSA(pubkey);
 			
 			if (!rsakey) {
@@ -262,19 +273,19 @@ storage::init_storage(const char* name, visibility_t visibility, protection_t pr
 		m_symkey_len = CIPKEYLEN;
 	}
 
-	rc = EVP_VerifyInit(&vfctx, DIGESTTYP());
+	rc = EVP_VerifyInit(vfctx, DIGESTTYP());
 	if (rc != EVPOK) {
 		MAEMOSEC_ERROR("EVP_VerifyInit returns %d (%s)", rc, strerror(errno));
-		return;
+		goto free_vfctx;
 	}
 
 	/*
 	 * Absolute path name is part of the signature.
 	 */
-	rc = EVP_VerifyUpdate(&vfctx, m_filename.c_str(), strlen(m_filename.c_str()));
+	rc = EVP_VerifyUpdate(vfctx, m_filename.c_str(), strlen(m_filename.c_str()));
 	if (rc != EVPOK) {
 		MAEMOSEC_ERROR("EVP_VerifyUpdate returns %d (%d)", rc, errno);
-		return;
+		goto free_vfctx;
 	}
 
 	/*
@@ -322,10 +333,10 @@ storage::init_storage(const char* name, visibility_t visibility, protection_t pr
 		
 		// Compute the current digest
 		MAEMOSEC_DEBUG(1, "checking %d bytes of data", c - (char*)data);
-		rc = EVP_VerifyUpdate(&vfctx, data, c - (char*)data);
+		rc = EVP_VerifyUpdate(vfctx, data, c - (char*)data);
 		if (rc != EVPOK) {
 			MAEMOSEC_ERROR("EVP_VerifyUpdate returns %d (%d)", rc, errno);
-			return;
+			goto free_vfctx;
 		}
 
 		// Read the stored signature
@@ -344,13 +355,12 @@ storage::init_storage(const char* name, visibility_t visibility, protection_t pr
 
 		MAEMOSEC_DEBUG(1, "loaded %d bytes of signature", mdlen);
 
-		rc = EVP_VerifyFinal(&vfctx, mdref, mdlen, pubkey);
-		EVP_MD_CTX_cleanup(&vfctx);
+		rc = EVP_VerifyFinal(vfctx, mdref, mdlen, pubkey);
 		if (rc != EVPOK) {
 			EVP_PKEY_free(pubkey);
 			MAEMOSEC_ERROR("Storage integrity test failed");
 			m_contents.clear();
-			return;
+			goto free_vfctx;
 		} else {
 			MAEMOSEC_DEBUG(1, "Storage integrity test OK");
 		}
@@ -405,6 +415,9 @@ storage::init_storage(const char* name, visibility_t visibility, protection_t pr
 		unmap_file(data, fd, len);
 	if (pubkey)
 		EVP_PKEY_free(pubkey);
+  free_vfctx:
+	EVP_MD_CTX_free(vfctx);
+
 	MAEMOSEC_DEBUG(1, "Return");
 }
 
@@ -543,44 +556,48 @@ storage::unmap_file(unsigned char* data, int fd, ssize_t len)
 bool
 storage::compute_digest(unsigned char* data, ssize_t bytes, string& digest)
 {
-	EVP_MD_CTX mdctx;
+	EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
 	unsigned char md[DIGESTLEN];
 	unsigned int mdlen;
 	char hlp [3];
 	int rc;
+	bool rv = false;
 
 	// EVP_MD_CTX_init(&mdctx);
-	rc = EVP_DigestInit(&mdctx, DIGESTTYP());
+	rc = EVP_DigestInit(mdctx, DIGESTTYP());
 	if (EVPOK != rc) {
 		MAEMOSEC_ERROR("EVP_DigestInit returns %d (%s)", rc, strerror(errno));
-		return(false);
+		goto err;
 	}
 
 	MAEMOSEC_DEBUG(1, "computing digest over %d bytes", bytes);
 
-	rc = EVP_DigestUpdate(&mdctx, data, bytes);
+	rc = EVP_DigestUpdate(mdctx, data, bytes);
 	if (EVPOK != rc) {
 		MAEMOSEC_ERROR("EVP_DigestUpdate returns %d (%d)", rc, errno);
-		return(false);
+		goto err;
 	}
 
-	rc = EVP_DigestFinal(&mdctx, md, &mdlen);
+	rc = EVP_DigestFinal(mdctx, md, &mdlen);
 	if (rc != EVPOK) {
 		MAEMOSEC_ERROR("EVP_DigestFinal returns %d (%d)", rc, errno);
-		return(false);
+		goto err;
 	}
-	EVP_MD_CTX_cleanup(&mdctx);
 
 	if ((int)mdlen != DIGESTLEN) {
 		MAEMOSEC_ERROR("Digestlen mismatch (%d != %d)", mdlen, DIGESTLEN);
-		return(false);
+		goto err;
 	}
 
 	for (unsigned int i = 0; i < mdlen; i++) {
 		sprintf(hlp, "%02x", md[i]);
 		digest.append(hlp,2);
 	}
-	return(true);
+
+	rv = true;
+err:
+	EVP_MD_CTX_free(mdctx);
+	return(rv);
 }
 
 
@@ -690,7 +707,7 @@ void
 storage::commit(void)
 {
 	int rc, fd = -1;
-	EVP_MD_CTX signctx;
+	EVP_MD_CTX *signctx = EVP_MD_CTX_new();
 	unsigned char signmd[255];
 	char tmp[3];
 	int cols;
@@ -703,15 +720,16 @@ storage::commit(void)
 	fd = creat(m_filename.c_str(), abits);
 	if (fd < 0) {
 		MAEMOSEC_ERROR("cannot create '%s'", m_filename.c_str());
+		EVP_MD_CTX_free(signctx);
 		return;
 	}
 
-	rc = EVP_SignInit(&signctx, DIGESTTYP());
+	rc = EVP_SignInit(signctx, DIGESTTYP());
 	/*
 	 * Include absolute pathname in signature to
 	 * prevent renaming.
 	 */
-	EVP_SignUpdate(&signctx, m_filename.c_str(), strlen(m_filename.c_str()));
+	EVP_SignUpdate(signctx, m_filename.c_str(), strlen(m_filename.c_str()));
 
 	for (
 		map<string, string>::const_iterator ii = m_contents.begin();
@@ -724,18 +742,18 @@ storage::commit(void)
 			MAEMOSEC_ERROR("m_contents broken");
 			goto end;
 		}
-		checked_write(fd, tmp, &signctx);
-		checked_write(fd, " *", &signctx);
+		checked_write(fd, tmp, signctx);
+		checked_write(fd, " *", signctx);
 		tmp = ii->first.c_str();
 		if (!tmp) {
 			MAEMOSEC_ERROR("m_contents broken");
 			goto end;
 		}
-		checked_write(fd, tmp, &signctx);
-		checked_write(fd, "\n", &signctx);
+		checked_write(fd, tmp, signctx);
+		checked_write(fd, "\n", signctx);
 	}
 
-	rc = bb5_rsakp_sign(&signctx, signmd, sizeof(signmd));
+	rc = bb5_rsakp_sign(signctx, signmd, sizeof(signmd));
 
 	if (rc > 0) {
 		string signature;
@@ -754,8 +772,6 @@ storage::commit(void)
 		checked_write(fd, signature.c_str(), NULL);
 	}
 
-	EVP_MD_CTX_cleanup(&signctx);
-
 	if (prot_encrypted == m_prot) {
 		string key;
 		checked_write(fd, key_mark "\n", NULL);
@@ -773,6 +789,8 @@ storage::commit(void)
 	}
 
 end:
+	EVP_MD_CTX_free(signctx);
+
 	close(fd);
 }
 
@@ -881,10 +899,10 @@ storage::encrypt_file_in_place(const char* pathname, string& digest)
 	unsigned char* data;
 	ssize_t len, rlen, tst;
 	int fd, rc;
-	bool res;
+	bool res = false;
 	unsigned int mdlen;
 	char hlp [3];
-	EVP_MD_CTX mdctx;
+	EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
 	unsigned char md[DIGESTLEN];
 
 	data = map_file(pathname, O_RDWR, &fd, &len, &rlen);
@@ -896,13 +914,13 @@ storage::encrypt_file_in_place(const char* pathname, string& digest)
 	memset(data + rlen, '\0', len - rlen);
 
 	// EVP_MD_CTX_init(&mdctx);
-	rc = EVP_DigestInit(&mdctx, DIGESTTYP());
+	rc = EVP_DigestInit(mdctx, DIGESTTYP());
 	if (rc != EVPOK) {
 		MAEMOSEC_ERROR("EVP_DigestInit returns %d (%s)", rc, strerror(errno));
-		return(false);
+		goto err;
 	}
 
-	res = cryptop(AES_ENCRYPT, data, NULL, len - 1, &mdctx);
+	res = cryptop(AES_ENCRYPT, data, NULL, len - 1, mdctx);
 	if (res) {
 		*(data + len - 1) = len - rlen;
 	}
@@ -919,15 +937,17 @@ storage::encrypt_file_in_place(const char* pathname, string& digest)
 
 	unmap_file(data, fd, len);
 
-	rc = EVP_DigestFinal(&mdctx, md, &mdlen);
+	rc = EVP_DigestFinal(mdctx, md, &mdlen);
 	if (rc != EVPOK) {
 		MAEMOSEC_ERROR("EVP_DigestFinal returns %d (%d)", rc, errno);
-		return(false);
+		res = false;
+		goto err;
 	}
 
 	if ((int)mdlen != DIGESTLEN) {
 		MAEMOSEC_ERROR("Digestlen mismatch (%d != %d)", mdlen, DIGESTLEN);
-		return(false);
+		res = false;
+		goto err;
 	}
 
 	for (unsigned int i = 0; i < mdlen; i++) {
@@ -935,8 +955,10 @@ storage::encrypt_file_in_place(const char* pathname, string& digest)
 		digest.append(hlp,2);
 	}
 
-	EVP_MD_CTX_cleanup(&mdctx);
-	MAEMOSEC_DEBUG(1, "Computed digest is '%s'", digest.c_str());
+err:
+	EVP_MD_CTX_free(mdctx);
+	if (res)
+		MAEMOSEC_DEBUG(1, "Computed digest is '%s'", digest.c_str());
 
 	return(res);
 }
@@ -948,10 +970,10 @@ storage::encrypt_file(const char* pathname, unsigned char* from_buf, ssize_t len
 	unsigned char* locdata;
 	ssize_t rlen, tst;
 	int fd, rc;
-	bool res;
+	bool res = false;
 	unsigned int mdlen;
 	char hlp [3];
-	EVP_MD_CTX mdctx;
+	EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
 	unsigned char md[DIGESTLEN];
 
 	rlen = encrypted_length(len);
@@ -959,7 +981,7 @@ storage::encrypt_file(const char* pathname, unsigned char* from_buf, ssize_t len
 	locdata = (unsigned char*) malloc(rlen);
 	if (!locdata) {
 		MAEMOSEC_ERROR("cannot allocate");
-		return(false);
+		goto err;
 	}
 
 	memcpy(locdata, from_buf, len);
@@ -967,14 +989,14 @@ storage::encrypt_file(const char* pathname, unsigned char* from_buf, ssize_t len
 	memset(locdata + len, '\0', rlen - len);
 
 	// EVP_MD_CTX_init(&mdctx);
-	rc = EVP_DigestInit(&mdctx, DIGESTTYP());
+	rc = EVP_DigestInit(mdctx, DIGESTTYP());
 	if (rc != EVPOK) {
 		MAEMOSEC_ERROR("EVP_DigestInit returns %d (%s)", rc, strerror(errno));
 		free(locdata);
-		return(false);
+		goto err;
 	}
 
-	res = cryptop(AES_ENCRYPT, locdata, NULL, rlen - 1, &mdctx);
+	res = cryptop(AES_ENCRYPT, locdata, NULL, rlen - 1, mdctx);
 	if (res) {
 		*(locdata + rlen - 1) = rlen - len;
 	}
@@ -983,7 +1005,8 @@ storage::encrypt_file(const char* pathname, unsigned char* from_buf, ssize_t len
 	if (fd < 0) {
 		MAEMOSEC_ERROR("cannot create '%s' (%d)", pathname, errno);
 		free(locdata);
-		return(false);
+		res = false;
+		goto err;
 	}
 
 	tst = write(fd, locdata, rlen);
@@ -992,21 +1015,24 @@ storage::encrypt_file(const char* pathname, unsigned char* from_buf, ssize_t len
 			  rlen, pathname, tst, errno);
 		free(locdata);
 		close(fd);
-		return(false);
+		res = false;
+		goto err;
 	}
 
 	free(locdata);
 	close(fd);
 
-	rc = EVP_DigestFinal(&mdctx, md, &mdlen);
+	rc = EVP_DigestFinal(mdctx, md, &mdlen);
 	if (rc != EVPOK) {
 		MAEMOSEC_ERROR("EVP_DigestFinal returns %d (%d)", rc, errno);
-		return(false);
+		res = false;
+		goto err;
 	}
 
 	if ((int)mdlen != DIGESTLEN) {
 		MAEMOSEC_ERROR("Digestlen mismatch (%d != %d)", mdlen, DIGESTLEN);
-		return(false);
+		res = false;
+		goto err;
 	}
 
 	for (unsigned int i = 0; i < mdlen; i++) {
@@ -1014,8 +1040,10 @@ storage::encrypt_file(const char* pathname, unsigned char* from_buf, ssize_t len
 		digest.append(hlp,2);
 	}
 
-	EVP_MD_CTX_cleanup(&mdctx);
-	MAEMOSEC_DEBUG(1, "Computed digest is '%s'", digest.c_str());
+err:
+	EVP_MD_CTX_free(mdctx);
+	if (res)
+		MAEMOSEC_DEBUG(1, "Computed digest is '%s'", digest.c_str());
 
 	return(res);
 }
@@ -1032,14 +1060,15 @@ storage::decrypt_file(const char* pathname,
 	ssize_t llen, rlen, len_difference;
 	unsigned int mdlen;
 	char hlp [3];
-	EVP_MD_CTX mdctx;
+	EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
 	unsigned char md[DIGESTLEN];
+	bool rv = false;
 
 	digest.clear();
 	data = map_file(pathname, O_RDONLY, &fd, &llen, &rlen);
 	if (MAP_FAILED == data) {
 		MAEMOSEC_ERROR("cannot map '%s'", pathname);
-		return(false);
+		goto err;
 	}
 	/*
 	 * The last byte encodes the amount of padding that
@@ -1049,7 +1078,7 @@ storage::decrypt_file(const char* pathname,
 	len_difference = *(data + llen - 1);
 	if (AES_BLOCK_SIZE < len_difference	|| rlen < len_difference) {
 		MAEMOSEC_ERROR("'%s' is corrupted", pathname);
-		return(false);
+		goto err;
 	}
 	rlen -= len_difference;
 	MAEMOSEC_DEBUG(1, "real len is %d bytes", rlen);
@@ -1057,32 +1086,32 @@ storage::decrypt_file(const char* pathname,
 		*to_buf = locbuf = (unsigned char*) malloc (llen - 1);
 		if (!locbuf) {
 			MAEMOSEC_ERROR("cannot allocate %d bytes", llen - 1);
-			return(false);
+			goto err;
 		}
 		memset(locbuf, '\0', rlen);
 	} else
 		locbuf = NULL;
 
 	// EVP_MD_CTX_init(&mdctx);
-	rc = EVP_DigestInit(&mdctx, DIGESTTYP());
+	rc = EVP_DigestInit(mdctx, DIGESTTYP());
 	if (EVPOK != rc) {
 		MAEMOSEC_ERROR("EVP_DigestInit returns %d (%s)", rc, strerror(errno));
-		return(false);
+		goto err;
 	}
 
-	if (!cryptop(AES_DECRYPT, data, locbuf, llen - 1, &mdctx)) {
+	if (!cryptop(AES_DECRYPT, data, locbuf, llen - 1, mdctx)) {
 		MAEMOSEC_ERROR("Decryption failed");
-		return(false);
+		goto err;
 	}
 
-	rc = EVP_DigestFinal(&mdctx, md, &mdlen);
+	rc = EVP_DigestFinal(mdctx, md, &mdlen);
 	if (rc != EVPOK) {
 		MAEMOSEC_ERROR("EVP_DigestFinal returns %d (%d)", rc, errno);
-		return(false);
+		goto err;
 	}
 	if ((int)mdlen != DIGESTLEN) {
 		MAEMOSEC_ERROR("Digestlen mismatch (%d != %d)", mdlen, DIGESTLEN);
-		return(false);
+		goto err;
 	}
 
 	for (unsigned int i = 0; i < mdlen; i++) {
@@ -1092,9 +1121,11 @@ storage::decrypt_file(const char* pathname,
 	unmap_file(data, fd, llen);
 	if (len)
 		*len = rlen;
-	EVP_MD_CTX_cleanup(&mdctx);
+	rv = true;
+err:
+	EVP_MD_CTX_free(mdctx);
 	MAEMOSEC_DEBUG(1, "Computed digest is '%s'", digest.c_str());
-	return(true);
+	return(rv);
 }
 
 

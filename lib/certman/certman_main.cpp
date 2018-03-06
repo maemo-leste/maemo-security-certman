@@ -121,7 +121,8 @@ verify_cert(X509_STORE* ctx, X509* cert, bool allow_unknown_issuer)
 
 	retval = (X509_verify_cert(csc) > 0);
 	if (allow_unknown_issuer && 
-		X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY == csc->error)
+		X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY ==
+		X509_STORE_CTX_get_error(csc))
 		/*
 		 * TODO: Make sure that this does not make openssl to ignore
 		 * other, more severe errors.

@@ -91,7 +91,7 @@ extern "C"
 		struct stat fs;
 		string dirname;
 		char cdirname [PATH_MAX];
-		char* dirsep = NULL;
+		const char* dirsep = NULL;
 		bool is_local = false;
 		char* tgtname = NULL;
 		size_t rv;
