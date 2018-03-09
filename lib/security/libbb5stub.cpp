@@ -70,10 +70,13 @@ load_root_certificate(X509_STORE* to_this)
 		MAEMOSEC_DEBUG(1, "cannot load root certificate from '%s'", root_crt_name);
 	} else {
 		X509_OBJECT* obj;
+		STACK_OF(X509_OBJECT) *objs;
+
 		MAEMOSEC_DEBUG(1, "loaded root ca from '%s'", root_crt_name);
-		obj = sk_X509_OBJECT_value(to_this->objs, 0);
-		if (obj && obj->type == X509_LU_X509)
-			root_crt = obj->data.x509;
+		objs = X509_STORE_get0_objects(to_this);
+		obj = sk_X509_OBJECT_value(objs, 0);
+		if (obj && X509_OBJECT_get_type(obj) == X509_LU_X509)
+			root_crt = X509_OBJECT_get0_X509(obj);
 		else
 			MAEMOSEC_ERROR("cannot find root certificate");
 	}
