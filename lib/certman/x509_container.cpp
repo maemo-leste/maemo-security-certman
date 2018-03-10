@@ -68,6 +68,7 @@ namespace maemosec {
 		char buf [255];
 		X509_EXTENSION *ext;
 		int pos, len;
+        STACK_OF(X509_EXTENSION) *exts;
 
 		pos = X509_get_ext_by_NID(m_cert, nid, -1);
 		if (-1 == pos) {
@@ -75,7 +76,7 @@ namespace maemosec {
 			return(false);
 		}
 
-		ext = sk_X509_EXTENSION_value(m_cert->cert_info->extensions, pos);
+		ext = X509_get_ext(m_cert, pos);
 		if (NULL == ext) {
 			MAEMOSEC_ERROR("Attribute %d not found", pos);
 			return(false);
@@ -186,9 +187,9 @@ namespace maemosec {
 		rc = X509_STORE_CTX_init(csc, tmp_store, m_cert, NULL);
 
 		retval = (X509_verify_cert(csc) > 0);
-		*error = csc->error;
+		*error = X509_STORE_CTX_get_error(csc);
 		if (!retval) {
-			MAEMOSEC_DEBUG(1, "Verification fails: %s", X509_verify_cert_error_string(csc->error));
+			MAEMOSEC_DEBUG(1, "Verification fails: %s", X509_verify_cert_error_string(X509_STORE_CTX_get_error(csc)));
 		}
 		X509_STORE_CTX_free(csc);
 		X509_STORE_free(tmp_store);
