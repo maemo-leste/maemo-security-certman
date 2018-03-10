@@ -400,6 +400,7 @@ access_attribute(SESSION sess,
 				ASN1_INTEGER* ival = NULL;
 				unsigned char* buf = NULL;
 				int len;
+				const BIGNUM *bn;
 
 				rc = maemosec_certman_get_key_id(cert, key_id);
 				if (0 != rc) {
@@ -441,8 +442,9 @@ access_attribute(SESSION sess,
 					goto out;
 				}
 				MAEMOSEC_DEBUG(1, "%s: got RSA", __func__);
-				ival = BN_to_ASN1_INTEGER(rsak->n, NULL);
-				if (NULL == rsak) {
+				RSA_get0_factors(rsak, &bn, NULL);
+				ival = BN_to_ASN1_INTEGER(bn, NULL);
+				if (NULL == ival) {
 					MAEMOSEC_ERROR("Cannot convert to ASN1_INTEGER");
 					rv = CKR_FUNCTION_FAILED;
 					goto out;
@@ -723,7 +725,7 @@ set_attribute(SESSION sess,
 				 * TODO: Set in certificate
 				 */
 				MAEMOSEC_DEBUG(1,"Set serial number");
-				M_ASN1_INTEGER_free(ival);
+				ASN1_INTEGER_free(ival);
 			}
 		}
 		break;
@@ -1504,7 +1506,7 @@ CK_DECLARE_FUNCTION(CK_RV, C_Sign)(CK_SESSION_HANDLE hSession,
 	int rc;
 	CK_RV rv = CKR_OK;
 	SESSION sess;
-	EVP_MD_CTX signctx;
+	EVP_MD_CTX *signctx;
 	unsigned signature_len = 0;
 
 	MAEMOSEC_DEBUG(1, "Enter %s", __func__);
@@ -1512,6 +1514,12 @@ CK_DECLARE_FUNCTION(CK_RV, C_Sign)(CK_SESSION_HANDLE hSession,
 	GET_SESSION(hSession, sess);
 	if (NULL == sess->signing_key) {
 		return(CKR_ARGUMENTS_BAD);
+	}
+
+	signctx = EVP_MD_CTX_new();
+	if (!signctx) {
+		rv = CKR_HOST_MEMORY;
+		goto out;
 	}
 
 	switch (sess->signing_algorithm) {
@@ -1542,7 +1550,7 @@ CK_DECLARE_FUNCTION(CK_RV, C_Sign)(CK_SESSION_HANDLE hSession,
 		
 	case CKM_SHA1_RSA_PKCS:
 		signature_len = EVP_MD_size(EVP_sha1());
-		rc = EVP_SignInit(&signctx, EVP_sha1());
+		rc = EVP_SignInit(signctx, EVP_sha1());
 		break;
 
 	default:
@@ -1557,11 +1565,13 @@ CK_DECLARE_FUNCTION(CK_RV, C_Sign)(CK_SESSION_HANDLE hSession,
 		goto out;
 	}
 		
-	rc = EVP_SignUpdate(&signctx, pData, ulDataLen);
-	rc = EVP_SignFinal(&signctx, pSignature, (unsigned*)pulSignatureLen, sess->signing_key);
-	EVP_MD_CTX_cleanup(&signctx);
+	rc = EVP_SignUpdate(signctx, pData, ulDataLen);
+	rc = EVP_SignFinal(signctx, pSignature, (unsigned*)pulSignatureLen, sess->signing_key);
+	EVP_MD_CTX_reset(signctx);
 
  out:
+	if (signctx)
+		EVP_MD_CTX_free(signctx);
 	return(rv);
 }
 
