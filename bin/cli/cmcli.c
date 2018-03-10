@@ -348,7 +348,7 @@ struct check_ssl_args {
 static int
 check_ssl_certificate(X509_STORE_CTX *ctx, void* arg)
 {
-	int i, purp;
+	int i;
 	X509* cert;
 	struct check_ssl_args *args = (struct check_ssl_args*) arg;
 

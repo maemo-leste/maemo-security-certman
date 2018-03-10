@@ -285,7 +285,7 @@ extern "C" {
 		new_session->read_only = !slot_info->is_writable;
 		new_session->state = sstat_base;
 		new_session->signing_key = NULL;
-		new_session->signing_algorithm = NULL;
+		new_session->signing_algorithm = 0;
 		new_session->certs = NULL;
 		sessions.push_back(new_session);
 

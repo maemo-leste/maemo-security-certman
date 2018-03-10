@@ -159,7 +159,6 @@ extern "C" {
 		EVP_cleanup();
 		X509_TRUST_cleanup();
 		CRYPTO_cleanup_all_ex_data();
-		ERR_remove_state(0);
 		ERR_free_strings();
 		MAEMOSEC_DEBUG(1, "%s: exit", __func__);
 	}
