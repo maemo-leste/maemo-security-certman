@@ -350,7 +350,6 @@ check_ssl_certificate(X509_STORE_CTX *ctx, void* arg)
 {
 	int i, purp;
 	X509* cert;
-	X509_VERIFY_PARAM *param;
 	struct check_ssl_args *args = (struct check_ssl_args*) arg;
 
 	if (!ctx) {
@@ -362,7 +361,6 @@ check_ssl_certificate(X509_STORE_CTX *ctx, void* arg)
 	 * makes sense at all. */
 
 	cert = X509_STORE_CTX_get0_cert(ctx);
-	param = X509_STORE_CTX_get0_param(ctx);
 
 	/*
 	 * Do not imitate this code. This is but a feeble attempt
@@ -385,7 +383,6 @@ check_ssl_certificate(X509_STORE_CTX *ctx, void* arg)
 				maemosec_certman_get_nickname(untr, cname, sizeof(cname));
 
 				// Verify for any purpose.
-				X509_STORE_CTX_set0_param(ctx, param);
 				X509_STORE_CTX_set_cert(ctx, untr);
 
 				if (0 < X509_verify_cert(ctx)) {
