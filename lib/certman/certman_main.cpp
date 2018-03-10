@@ -464,7 +464,7 @@ make_unique_filename(X509* of_cert, struct local_domain* in_domain, string& to_s
 
 #define MAX_TRIES 100
 
-typedef enum hash_status {hash_not_exists, hash_already_exists, hash_error};
+typedef enum hash_status {hash_not_exists, hash_already_exists, hash_error} hash_status;
 
 static hash_status
 make_hash_filename(X509* of_cert, const char* in_dir, const char* to_certfile, string &result)
@@ -660,13 +660,16 @@ read_key_from_file(maemosec_key_id key_id, EVP_PKEY** key, char* passwd)
 		p8 = PEM_read_bio_PKCS8(infile, NULL, NULL, NULL);
 		MAEMOSEC_DEBUG(1, "PEM_read_bio_PKCS8 ret %p", p8);
 		if (p8) {
+            X509_ALGOR *algor;
+            ASN1_OCTET_STRING *digest;
+            X509_SIG_getm(p8, &algor, &digest);
 			MAEMOSEC_DEBUG(1, "Decrypting with '%s'", lpasswd);
 			p8inf = (PKCS8_PRIV_KEY_INFO*)
-				PKCS12_item_decrypt_d2i(p8->algor, 
+				PKCS12_item_decrypt_d2i(algor,
 										ASN1_ITEM_rptr(PKCS8_PRIV_KEY_INFO),
-										lpasswd, 
+										lpasswd,
 										strlen(lpasswd),
-										p8->digest,
+										digest,
 										1);
 			MAEMOSEC_DEBUG(1, "PKCS8_decrypt ret %p", p8inf);
 			X509_SIG_free(p8);
@@ -1072,6 +1075,7 @@ extern "C" {
 		vector<string> certs;
 		X509_STORE* tmp_store;
 		X509_OBJECT* obj;
+        STACK_OF(X509_OBJECT) *objs;
 		int i, rc, added = 0;
 
 		AUTOINIT;
@@ -1097,11 +1101,11 @@ extern "C" {
 		tmp_store = X509_STORE_new();
 		if (tmp_store) {
 			if (load_certs(certs, false, tmp_store)) {
-				for (i = 0; i < sk_X509_OBJECT_num(tmp_store->objs); i++) {
-					obj = sk_X509_OBJECT_value(tmp_store->objs, i);
-					if (X509_LU_X509 == obj->type) {
-						rc = maemosec_certman_add_cert
-							(to_domain, obj->data.x509);
+                objs = X509_STORE_get0_objects(tmp_store);
+				for (i = 0; i < sk_X509_OBJECT_num(objs); i++) {
+					obj = sk_X509_OBJECT_value(objs, i);
+					if (X509_LU_X509 == X509_OBJECT_get_type(obj)) {
+						rc = maemosec_certman_add_cert(to_domain, X509_OBJECT_get0_X509(obj));
 						if (0 == rc) {
 							added++;
 						} else {
