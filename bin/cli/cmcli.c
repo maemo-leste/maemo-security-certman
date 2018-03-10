@@ -47,10 +47,7 @@
 #include <openssl/evp.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
-
-#ifndef sk_STORE_OBJECT_num
-#define sk_STORE_OBJECT_num(st) SKM_sk_num(STORE_OBJECT, (st))
-#endif
+#include <openssl/x509_vfy.h>
 
 #include <maemosec_certman.h>
 #include <maemosec_common.h>
@@ -237,6 +234,7 @@ static int
 verify_cert(X509_STORE* store, X509* cert, int show_trust_chain)
 {
 	X509_STORE_CTX *csc;
+    STACK_OF(X509) *chain = NULL;
 	int retval;
 	int rc;
 
@@ -261,16 +259,18 @@ verify_cert(X509_STORE* store, X509* cert, int show_trust_chain)
 		if (show_trust_chain) {
 			int i;
 			printf(" trust chain:\n");
-			for (i = sk_X509_num(csc->chain); i > 0; i--) {
-				X509* issuer = sk_X509_value(csc->chain, i - 1);
+            chain = X509_STORE_CTX_get1_chain(csc);
+			for (i = sk_X509_num(chain); i > 0; i--) {
+				X509* issuer = sk_X509_value(chain, i - 1);
 				if (issuer) {
-					show_cert(i - sk_X509_num(csc->chain) - 2, issuer, NULL);
+					show_cert(i - sk_X509_num(chain) - 2, issuer, NULL);
 				}
 			}
+            sk_X509_pop_free(chain, X509_free);
 		}
 	} else
 		printf(" Verification failed: %s\n", 
-			   X509_verify_cert_error_string(csc->error));
+			   X509_verify_cert_error_string(X509_STORE_CTX_get_error(csc)));
 
 	X509_STORE_CTX_free(csc);
 	return(retval);
@@ -323,14 +323,16 @@ X509_STORE_dup(X509_STORE* model)
 {
 	X509_STORE* res = NULL;
 	X509_OBJECT* obj;
+    STACK_OF(X509_OBJECT) *objs;
 	int i;
 
-	if (model && model->objs) {
-		res = X509_STORE_new();	
-		for (i = 0; i < sk_X509_OBJECT_num(model->objs); i++) {
-			obj = sk_X509_OBJECT_value(model->objs, i);
-			if (X509_LU_X509 == obj->type) {
-				X509_STORE_add_cert(res, obj->data.x509);
+    objs = X509_STORE_get0_objects(model);
+	if (model && objs) {
+		res = X509_STORE_new();
+		for (i = 0; i < sk_X509_OBJECT_num(objs); i++) {
+			obj = sk_X509_OBJECT_value(objs, i);
+			if (X509_LU_X509 == X509_OBJECT_get_type(obj)) {
+				X509_STORE_add_cert(res, X509_OBJECT_get0_X509(obj));
 			}
 		}
 	}
@@ -340,6 +342,7 @@ X509_STORE_dup(X509_STORE* model)
 struct check_ssl_args {
 	int result;
 	int save;
+    X509_STORE* store;
 };
 
 static int
@@ -347,6 +350,7 @@ check_ssl_certificate(X509_STORE_CTX *ctx, void* arg)
 {
 	int i, purp;
 	X509* cert;
+    X509_VERIFY_PARAM *param;
 	struct check_ssl_args *args = (struct check_ssl_args*) arg;
 
 	if (!ctx) {
@@ -354,58 +358,91 @@ check_ssl_certificate(X509_STORE_CTX *ctx, void* arg)
 		return(0);
 	}
 
-	cert = ctx->cert;
-	purp = ctx->param->purpose;
-	MAEMOSEC_DEBUG(1, "Initial purpose %d", purp);
+    /* TODO: Save current context original purpose - although I don't think it
+     * makes sense at all. */
+
+	cert = X509_STORE_CTX_get0_cert(ctx);
+    param = X509_STORE_CTX_get0_param(ctx);
 
 	/*
 	 * Do not imitate this code. This is but a feeble attempt
 	 * to study the incoming certificate chain.
 	 */
-	if (ctx->untrusted) {
-		for (i = sk_X509_num(ctx->untrusted); i > 1; i--) {
+	if (X509_STORE_CTX_get0_chain(ctx)) {
+        STACK_OF(X509) *orig_untrusted_chain, *chain;
+
+        chain = NULL;
+        orig_untrusted_chain = NULL;
+
+        orig_untrusted_chain = X509_STORE_CTX_get1_chain(ctx);
+
+		for (i = sk_X509_num(orig_untrusted_chain); i > 1; i--) {
 			char cname[256];
-			X509* untr = sk_X509_value(ctx->untrusted, i - 1);
+			X509* untr = sk_X509_value(orig_untrusted_chain, i - 1);
 			if (untr) {
 				if (args->save)
 					write_cert_to_file(untr);
 				maemosec_certman_get_nickname(untr, cname, sizeof(cname));
 
-				// Verify for any purpose.
-				ctx->cert = untr;
-				ctx->param->purpose = 0;
+                // Verify for any purpose.
+                X509_STORE_CTX_set0_param(ctx, param);
+                X509_STORE_CTX_set_cert(ctx, untr);
 
 				if (0 < X509_verify_cert(ctx)) {
 					MAEMOSEC_DEBUG(1, "Accepted '%s'", cname);
 				} else {
 					MAEMOSEC_ERROR("Invalid cert '%s' in chain (%s)", 
-								   cname, X509_verify_cert_error_string(ctx->error));
+								   cname, X509_verify_cert_error_string(X509_STORE_CTX_get_error(ctx)));
 				}
+
+                /* Cleanup frees 'chain' */
+                X509_STORE_CTX_cleanup(ctx);
+
+                X509_STORE_CTX_init(ctx, args->store, NULL, NULL);
+                X509_STORE_CTX_set_cert(ctx, untr);
+
+                /* Restore our chain */
+                X509_STORE_CTX_set_chain(ctx, orig_untrusted_chain);
+
+                /* Get copy of restored chain, so that we can set it again, so
+                 * that OpenSSL doesn't free our final chain */
+                chain = X509_STORE_CTX_get1_chain(ctx);
+                X509_STORE_CTX_set_chain(ctx, chain);
 			}
 		}
+
+        /* Free our stored chain, at this point there should be a proper copy of
+         * it in ctx again */
+        sk_X509_pop_free(orig_untrusted_chain, X509_free);
 	}
 
-	ctx->cert = cert;
-	ctx->param->purpose = purp;
+    /* Restore original cert */
+    X509_STORE_CTX_set_cert(ctx, cert);
 
-	if (ctx->cert) {
-		show_cert(0, ctx->cert, NULL);
+    /* TODO: Restore original purpose */
+
+    X509* crt = X509_STORE_CTX_get0_cert(ctx);
+	if (crt) {
+		show_cert(0, crt, NULL);
 		args->result = X509_verify_cert(ctx);
 		if (0 == args->result) {
 			printf(" Verification failed: %s\n", 
-				   X509_verify_cert_error_string(ctx->error));
+				   X509_verify_cert_error_string(X509_STORE_CTX_get_error(ctx)));
 		} else {
-			printf(" trust chain(%d):\n", sk_X509_num(ctx->chain));
-			for (i = sk_X509_num(ctx->chain); i > 0; i--) {
-				X509* issuer = sk_X509_value(ctx->chain, i - 1);
+            STACK_OF(X509) *chain;
+            chain = X509_STORE_CTX_get0_chain(ctx);
+			printf(" trust chain(%d):\n", sk_X509_num(chain));
+			for (i = sk_X509_num(chain); i > 0; i--) {
+				X509* issuer = sk_X509_value(chain, i - 1);
 				if (issuer) {
-					show_cert(i - sk_X509_num(ctx->chain) - 2, issuer, NULL);
+					show_cert(i - sk_X509_num(chain) - 2, issuer, NULL);
 				}
 			}
 		}
 		if (args->save)
-			write_cert_to_file(ctx->cert);
+			write_cert_to_file(crt);
 	}
+
 	return(1);
 }
 
@@ -430,18 +467,31 @@ verify_object(X509_STORE *certs, const char* name)
 		SSL *scon;
 		struct check_ssl_args args;
 		int i;
+        long opts;
 
 		bio_err = BIO_new_fp(stderr, BIO_NOCLOSE);
 		SSL_library_init();
 		SSL_load_error_strings();
 
-		c_ctx=SSL_CTX_new(TLSv1_method());
+		c_ctx=SSL_CTX_new(SSLv23_method());
 
 		if (NULL == c_ctx)
 			return(0);
 
+        /* Support TLSv1_2 only */
+        opts = SSL_CTX_get_options(c_ctx);
+        opts |= SSL_OP_NO_SSLv2;
+        opts |= SSL_OP_NO_SSLv3;
+        opts |= SSL_OP_NO_TLSv1;
+        opts |= SSL_OP_NO_TLSv1_1;
+        SSL_CTX_set_options(c_ctx, opts);
+
 		args.save = save_cert;
 		args.result = 0;
+        /* We need the store so that we can call X509_STORE_CTX_cleanup() and
+         * X509_STORE_CTX_init() again, this needs to be called after every
+         * x509_verify_cert() */
+        args.store = certs;
 		SSL_CTX_set_cert_verify_callback(c_ctx, check_ssl_certificate, &args);
 		SSL_CTX_set_cert_store(c_ctx, X509_STORE_dup(certs));
 
@@ -845,10 +895,12 @@ main(int argc, char* argv[])
 			if (my_domain)
 				maemosec_certman_iterate_certs(my_domain, show_cert, NULL);
 			else {
-				for (i = 0; i < sk_X509_OBJECT_num(certs->objs); i++) {
-					X509_OBJECT* obj = sk_X509_OBJECT_value(certs->objs, i);
-					if (obj->type == X509_LU_X509) {
-						show_cert(i, obj->data.x509, NULL);
+                STACK_OF(X509_OBJECT) *objs;
+                objs = X509_STORE_get0_objects(certs);
+				for (i = 0; i < sk_X509_OBJECT_num(objs); i++) {
+					X509_OBJECT* obj = sk_X509_OBJECT_value(objs, i);
+					if (X509_OBJECT_get_type(obj) == X509_LU_X509) {
+						show_cert(i, X509_OBJECT_get0_X509(obj), NULL);
 					}
 				}
 			}
@@ -892,11 +944,14 @@ main(int argc, char* argv[])
 
 			MAEMOSEC_DEBUG(1, "Adding %d certificates\n", argc - optind + 1);
 			for (i = optind - 1; i < argc; i++) {
+                STACK_OF(X509_OBJECT) *objs;
+
 				MAEMOSEC_DEBUG(1, "Add %s\n", argv[i]);
 				/*
 				 * Verify if trusted domains have been given
 				 */
-				if (sk_STORE_OBJECT_num(certs->objs)) {
+                objs = X509_STORE_get0_objects(certs);
+				if (sk_X509_OBJECT_num(objs)) {
 					if (!verify_cert(certs, get_cert(argv[i]), 0)) {
 						printf("Reject %s\n", argv[i]);
 						argv[i] = "";
@@ -996,8 +1051,13 @@ main(int argc, char* argv[])
             if (NULL != certs) {
                 X509_STORE* dup = X509_STORE_dup(certs);
                 MAEMOSEC_DEBUG(1, "original %d, copy %d", sk_X509_num(certs->objs), sk_X509_num(dup->objs));
-                if (sk_X509_num(dup->objs) < sk_X509_num(certs->objs)) {
-                    printf("copy failed: %d != %d\n", sk_X509_num(dup->objs), sk_X509_num(certs->objs));
+                STACK_OF(X509_OBJECT) *dup_objs;
+                STACK_OF(X509_OBJECT) *certs_objs;
+                dup_objs = X509_STORE_get0_objects(dup);
+                certs_objs = X509_STORE_get0_objects(certs);
+
+                if (sk_X509_OBJECT_num(dup_objs) < sk_X509_OBJECT_num(certs_objs)) {
+                    printf("copy failed: %d != %d\n", sk_X509_OBJECT_num(dup_objs), sk_X509_OBJECT_num(certs_objs));
                 }
                 X509_STORE_free(dup);
             }
