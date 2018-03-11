@@ -748,8 +748,8 @@ install_file(domain_handle into_domain, const char* filename)
         return errno;
 	}
 
-    if (NULL != into_domain)
-        remember_certificates(into_domain, &seenlist);
+	if (NULL != into_domain)
+		remember_certificates(into_domain, &seenlist);
 
 	ft = determine_filetype(fp, &idata);
 	switch (ft) 
@@ -1067,8 +1067,8 @@ main(int argc, char* argv[])
 	}
 
 end:
-    if (NULL != ocerts)
-        free(ocerts);
+	if (NULL != ocerts)
+		free(ocerts);
 	if (my_domain)
 		maemosec_certman_close_domain(my_domain);
 
