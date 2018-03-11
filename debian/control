@@ -18,7 +18,7 @@ Package: libmaemosec0-dbg
 Section: libdevel
 Architecture: any
 Priority: extra
-Depends: libmaemosec0 (= ${Source-Version})
+Depends: libmaemosec0 (= ${binary:Version})
 Description: Debug symbols for maemo security base library
  Debug symbols for the the maemo security base library 
 
@@ -39,7 +39,7 @@ Description: Maemo certificate manager shared library
 Package: libmaemosec-certman0-dbg
 Section: libdevel
 Architecture: any
-Depends: libmaemosec-certman0 (= ${Source-Version})
+Depends: libmaemosec-certman0 (= ${binary:Version})
 Description: Debug symbols for maemo certificate manager shared library
  Debug symbols for the maemo certificate manager shared library.
 
@@ -62,7 +62,7 @@ Description: Maemo certificate manager runtime tools
 Package: maemosec-certman-tools-dbg
 Section: devel
 Architecture: any
-Depends: maemosec-certman-tools (= ${Source-Version})
+Depends: maemosec-certman-tools (= ${binary:Version})
 Description: Debug symbols for maemo certificate manager runtime tools
  Debug symbols for the command line tools of maemo certificate manager
 
