@@ -1,3 +1,9 @@
+maemo-security-certman (0.3.0) unstable; urgency=low
+
+  Port to OpenSSL 1.1.0
+
+ -- Merlijn Wajer <merlijn@wizzup.org>  Sat, 14 Apr 2018 12:50:00 -0400
+
 maemo-security-certman (0.2.10) unstable; urgency=low
 
   Update the root CA store to match mozilla-central revision d10c97627b51
