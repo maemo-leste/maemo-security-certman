@@ -1,3 +1,9 @@
+maemo-security-certman (0.3.1) unstable; urgency=low
+
+  * Address various GCC warnings
+
+ -- Merlijn Wajer <merlijn@wizzup.org>  Mon, 20 Jan 2020 16:41:44 +0100
+
 maemo-security-certman (0.3.0) unstable; urgency=low
 
   Port to OpenSSL 1.1.0
