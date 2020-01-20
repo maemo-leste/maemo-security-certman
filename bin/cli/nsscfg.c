@@ -93,27 +93,27 @@ main(int argc, char* argv[])
 		switch (a) 
 			{
 			case 'c':
-				strncpy(cfg_dir, optarg, sizeof(cfg_dir));
+				strncpy(cfg_dir, optarg, sizeof(cfg_dir)-1);
 				break;
 			case 'm':
-				strncpy(mod_name, optarg, sizeof(mod_name));
+				strncpy(mod_name, optarg, sizeof(mod_name)-1);
 				break;
 			case 'l':
-				strncpy(dll_name, optarg, sizeof(dll_name));
+				strncpy(dll_name, optarg, sizeof(dll_name)-1);
 				break;
 			case 'i':
 				op_mode = mode_info;
 				break;
 			case 'r':
 				op_mode = mode_remove;
-				strncpy(mod_name, optarg, sizeof(mod_name));
+				strncpy(mod_name, optarg, sizeof(mod_name)-1);
 				break;
 			case 'R':
 				op_mode = mode_remove_internal;
 				break;
 			case 'e':
 				op_mode = mode_export;
-				strncpy(tgt_dir, optarg, sizeof(tgt_dir));
+				strncpy(tgt_dir, optarg, sizeof(tgt_dir)-1);
 				break;
 			default:
 				MAEMOSEC_DEBUG(1, "Invalid option '%hd'", a);
