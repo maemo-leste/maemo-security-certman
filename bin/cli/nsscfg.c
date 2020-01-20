@@ -231,7 +231,7 @@ main(int argc, char* argv[])
 				int fh;
 
 				ccount++;
-				sprintf(file_name, "%s/%d.der", tgt_dir, ccount);
+				snprintf(file_name, PATH_MAX, "%s/%d.der", tgt_dir, ccount);
 				printf("%d bytes to %s\n", node->cert->derCert.len, file_name);
 
 				fh = creat(file_name, 0644);

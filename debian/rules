@@ -7,7 +7,7 @@
 # This has to be exported to make some magic below work.
 export DH_OPTIONS
 
-CFLAGS = -Wall -g -fPIC -Werror -Wno-unused-const-variable -Wno-unused-but-set-variable
+CFLAGS = -Wall -g -fPIC -Werror -Wno-unused-const-variable -Wno-unused-but-set-variable -Wno-format-truncation
 
 ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
 	CFLAGS += -O0
