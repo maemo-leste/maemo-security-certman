@@ -1,3 +1,9 @@
+maemo-security-certman (0.3.2) unstable; urgency=low
+
+  * Address NSS define conflict
+
+ -- Merlijn Wajer <merlijn@wizzup.org>  Tue, 29 Nov 2022 19:50:58 +0100
+
 maemo-security-certman (0.3.1) unstable; urgency=low
 
   * Address various GCC warnings
