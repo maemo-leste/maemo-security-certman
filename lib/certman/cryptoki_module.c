@@ -63,13 +63,13 @@ static const char* attr_value(CK_ATTRIBUTE_TYPE of_a, const void* val, const uns
 /*
  * Support version 2.20 of the specs
  */
-#define CRYPTOKI_VERSION_MAJOR 2
-#define CRYPTOKI_VERSION_MINOR 20
+#define CRYPTOKI_VERSION_MAJOR_CERTMAN 2
+#define CRYPTOKI_VERSION_MINOR_CERTMAN 20
 
 static const CK_INFO library_info = {
 	.cryptokiVersion = {
-		.major = CRYPTOKI_VERSION_MAJOR,
-		.minor = CRYPTOKI_VERSION_MINOR
+		.major = CRYPTOKI_VERSION_MAJOR_CERTMAN,
+		.minor = CRYPTOKI_VERSION_MINOR_CERTMAN
 	},
 	.manufacturerID =
 		"Nokia Corporation               ",
