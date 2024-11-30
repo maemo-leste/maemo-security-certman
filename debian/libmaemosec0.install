@@ -1,1 +1,1 @@
-etc/certs/trusted/root.ca etc/certs/trusted/root.key /etc/certs/trusted
+usr/lib/*/libmaemosec.so.*
